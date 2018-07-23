@@ -148,6 +148,7 @@
 
         var OFFSCREEN_WIDTH,OFFSCREEN_HEIGHT;
         var LIGHT_X = 2.0, LIGHT_Y =6.0, LIGHT_Z = 2.0; //定义定光的位置
+        var currentAngle = 0.0;//当前角度 
         var lightPositions = [];
         var lightColors = [];
         var cameraPos = [10.0, 2.0, 10.0];
@@ -228,9 +229,11 @@
             viewProjMatrix.setPerspective(45, canvas.width / canvas.height, 1.0, 100.0);
             viewProjMatrix.lookAt(cameraPos[0],cameraPos[1],cameraPos[2], 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
 
-            var currentAngle = 0.0; 
             var cube = initVertexBuffersForCuble(gl);
             var tick = function () {
+                currentAngle = animate(currentAngle); 
+                gl.enable(gl.DEPTH_TEST);
+                updateLightPos(); 
                 gl.bindFramebuffer(gl.FRAMEBUFFER, gBuffer);   
                 // 清除帧缓冲区的绘制
                 gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);              // 转换到帧缓冲区中绘制 
@@ -263,11 +266,11 @@
                 }
                 gl.uniform3f(shaderLightingPass.viewPos,cameraPos[0],cameraPos[1],cameraPos[2]);
                 drawQuad(gl,shaderLightingPass);
-
-                /*gl.useProgram(shaderLightBox);
+                gl.disable(gl.DEPTH_TEST);
+                gl.useProgram(shaderLightBox);
                 for(var k = 0;k<lightPositions.length;k++) {
                    drawLight(gl, shaderLightBox, cube, lightPositions[k], lightColors[k], viewProjMatrix);
-                }*/
+                }
                 
                 window.requestAnimationFrame(tick, canvas);
             };
@@ -685,7 +688,24 @@
               lightColors.push([rColor,gColor,bColor]);
            }
         }
-
+        
+        //更新灯光的位置，让灯光运动起来
+        function updateLightPos(){
+           for(var i=0;i<lightPositions.length;i++){
+              if(i%3==0) {
+                 lightPositions[i][0] = lightPositions[i][0] + Math.cos(currentAngle / 180 * Math.PI) * (2.0)*Math.random();
+                 lightPositions[i][1] = lightPositions[i][1] + Math.sin(currentAngle / 180 * Math.PI) * 2.0*Math.random();
+              }
+              if(i%3==1) {
+                 lightPositions[i][0] = lightPositions[i][0] + Math.cos(currentAngle / 180 * Math.PI) * 2.0*Math.random();
+                 lightPositions[i][2] = lightPositions[i][2] + Math.sin(currentAngle / 180 * Math.PI) * 2.0*Math.random();
+              }
+              if(i%3==2) {
+                 lightPositions[i][1] = lightPositions[i][1] + Math.cos(currentAngle / 180 * Math.PI) * 2.0*Math.random();
+                 lightPositions[i][2] = lightPositions[i][2] + Math.sin(currentAngle / 180 * Math.PI) * 2.0*Math.random();
+              }
+           }
+        }
         var ANGLE_STEP = 40;   
 
         var last = Date.now(); 

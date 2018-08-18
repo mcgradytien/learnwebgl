@@ -11,29 +11,32 @@
         // LightedCube.js (c) 2012 matsuda
         // Vertex shader program
         var bloom_vs = `
+          #ifdef GL_ES
+             precision highp float;
+          #endif
           attribute vec3 aPos;
-          attribute vec3 aNormal;
-          attribute vec3 aTexCoords;
-
+          attribute vec4 aNormal;
+          attribute vec2 aTexCoords;
           varying vec3 FragPos;
           varying vec3 Normal;
           varying vec2 TexCoords;
-
           uniform mat4 viewProjection;
           uniform mat4 model;
           uniform mat4 normalMatrix;
-
           void main()
           {
              FragPos = vec3(model * vec4(aPos, 1.0));
-             TexCoords = aTexCoords;
-             
-             Normal = normalize(normalMatrix * aNormal);
+             TexCoords = aTexCoords; 
+             Normal = normalize(vec3(normalMatrix * aNormal));
              gl_Position = viewProjection * model *vec4(aPos, 1.0);
           }
         `;
         
-        var bloom_fs = `          
+        var bloom_fs = `
+          #extension GL_EXT_draw_buffers:require  
+          #ifdef GL_ES
+             precision highp float;
+          #endif 
           varying vec3 FragPos;
           varying vec3 Normal;
           varying vec2 TexCoords;
@@ -44,14 +47,16 @@
           };
           uniform Light lights[4];
           uniform sampler2D diffuseTexture;
+          uniform sampler2D cubeDiffusetexture;
           uniform vec3 viewPos;
+          uniform int isCube;
 
           void main()
           {
-            vec3 color = texture2D(diffuseTexture, TexCoords).rgb;
+            vec3 color = isCube==1 ? texture2D(cubeDiffusetexture, TexCoords).rgb:texture2D(diffuseTexture, TexCoords).rgb;
             vec3 normal = normalize(Normal);
             //ambient
-            vec3 ambient = 0.0 * color;
+            vec3 ambient = 0.2 * color;
             vec3 lighting = vec3(0.0);
             vec3 viewDir = normalize(viewPos - FragPos);
             for(int i = 0;i<4;i++){
@@ -68,10 +73,17 @@
             //check whether result is higher than some threshold, if so, output as bloom threshold color
             float brightness = dot(result, vec3(0.2126, 0.7152, 0.0722));
             if(brightness > 1.0)
-               BrightColor = vec4(result, 1.0);
+              gl_FragData[1] = vec4(result, 1.0);
             else
-                BrightColor = vec4(0.0, 0.0, 0.0, 1.0);
-            gl_FragColor = vec4(result, 1.0);
+              gl_FragData[1] = vec4(0.0, 0.0, 0.0, 1.0);
+            gl_FragData[0] = vec4(result, 1.0);
+            
+            /*if(brightness > 1.0)
+              gl_FragColor = vec4(result, 1.0);
+            else
+              gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            */
+            //gl_FragColor = vec4(result, 1.0);
           }
         `;
 
@@ -83,28 +95,31 @@
           void main()
           {
             TexCoords = aTexCoords;
-            gl_Position vec4(aPos, 1.0);
+            gl_Position = vec4(aPos, 1.0);
           }
         `;
 
         var bloom_final_fs = `
+           #ifdef GL_ES
+             precision highp float;
+           #endif
            varying vec2 TexCoords;
            uniform sampler2D scene;
            uniform sampler2D bloomBlur;
-           uniform float bloom;
-           uniform float exposure;
+           const float exposure = 1.0;
 
            void main(){
               const float gamma = 2.2;
               vec3 hdrColor = texture2D(scene, TexCoords).rgb;
               vec3 bloomColor = texture2D(bloomBlur, TexCoords).rgb;
-              if(bloom)
-                hdrColor + = bloomColor;//additive blending
+              //additive blending
+
+              hdrColor = hdrColor + bloomColor;
               //tone mapping
-              vec3 result = vec3(1.0) - exp(-hdrColor*exposure);
+              vec3 result = vec3(1.0) - exp(-hdrColor * exposure);
               // also gamma correct while we're at it
               result = pow(result, vec3(1.0 / gamma));
-              gl_FragColor = vec4(result, 1.0);
+              gl_FragColor = vec4(hdrColor, 1.0);
            }
         `;
         
@@ -112,7 +127,7 @@
             attribute vec3 aPos;
             attribute vec2 aTexCoords;
 
-            varying TexCoords;
+            varying vec2 TexCoords;
             void main(){
                TexCoords = aTexCoords;
                gl_Position = vec4(aPos, 1.0);
@@ -120,58 +135,79 @@
         `;
         
         var blur_fs = `
+            #ifdef GL_ES
+             precision highp float;
+            #endif
             varying vec2 TexCoords;
 
             uniform sampler2D image;
-            uniform float horizontal;
-            uniform float weight[5] = float[](0.2270270270, 0.1945945946, 0.1216216216, 0.0540540541, 0.0162162162);
-            
+            uniform vec2 texSize;
+            uniform int horizontal;
+            //uniform float weight[5] = float[](0.2270270270, 0.1945945946, 0.1216216216, 0.0540540541, 0.0162162162);
+            float weight[5];
             void main(){
-              vec2 tex_offset = 1.0 / textureSize(image, 0);
+              weight[0] = 0.2270270270;
+              weight[1] = 0.1945945946;
+              weight[2] = 0.1216216216;
+              weight[3] = 0.0540540541;
+              weight[4] = 0.0162162162;
+              vec2 tex_offset = 1.0 / texSize;
               vec3 result = texture2D(image, TexCoords).rgb * weight[0];
-              if(horizontal = 1.0) {
+              if(horizontal == 1) {
                 for(int i = 0;i < 5;i++) {
-                   result += texture2D(image, TexCoords + vec2(tex_offset.x * i, 0.0)).rgb * weight[i];
-                   result += texture2D(image, TexCoords - vec2(tex_offset.x * i, 0.0)).rgb * weight[i];
+                   result += texture2D(image, TexCoords + vec2(tex_offset.x * float(i), 0.0)).rgb * weight[i];
+                   result += texture2D(image, TexCoords - vec2(tex_offset.x * float(i), 0.0)).rgb * weight[i];
                 }
               } else {
                 for(int i = 0;i < 5;i++){
-                  result += texture2D(image, TexCoords + vec2(0.0, tex_offset.y * i)).rgb * weight[i];
-                  result += texture2D(image, TexCoords - vec2(0.0, tex_offset.y * i)).rgb * weight[i];
+                  result += texture2D(image, TexCoords + vec2(0.0, tex_offset.y * float(i))).rgb * weight[i];
+                  result += texture2D(image, TexCoords - vec2(0.0, tex_offset.y * float(i))).rgb * weight[i];
                 }
               }
+              /*if(horizontal==0){
+                gl_FragColor = vec4(result, 0.1);
+              } else {
+                gl_FragColor = vec4(result, 1.0);
+              }*/
               gl_FragColor = vec4(result, 1.0);
             }
         `;
         
         var light_box_fs = `
-            VS_OUT {
-              vec3 FragPos;
-              vec3 Normal;
-              vec2 TexCoords;
-            };
+        #extension GL_EXT_draw_buffers:require
+            #ifdef GL_ES
+             precision highp float;
+            #endif
+            varying vec3 FragPos;
+            varying vec3 Normal;
+            varying vec2 TexCoords;
+            
 
             uniform vec3 lightColor;
 
             void main(){
-              gl_FragColor = vec4(lightColor, 1.0);
+              /*gl_FragData[0] = vec4(lightColor, 1.0);
+              float brightness = dot(gl_FragData[0].rbg, vec3(0.2126, 0.7152, 0.0722));
+              if(brightness > 1.0){
+                  gl_FragData[1] = vec4(gl_FragData[0].rgb, 1.0);
+              }*/
+              /*gl_FragColor = vec4(lightColor, 1.0);
               float brightness = dot(gl_FragColor.rbg, vec3(0.2126, 0.7152, 0.0722));
               if(brightness > 1.0){
-                   BrightColor = vec4(gl_FragColor.rgb, 1.0);
-              }
+                  gl_FragColor = vec4(gl_FragColor.rgb, 1.0);
+              } else {
+                  gl_FragColor = vec4(0.0,0.0,0.0,1.0);
+              }*/
+              gl_FragColor = vec4(lightColor, 1.0);
             }
         `;
 
         var cameraPos, light_Pos;
-        var lightPositions = [
-               [0.00, 0.00, 49.50], [-1.40, -1.90, 9.00], [0.00, -1.80, 4.00], [0.80, -1.70, 6.00]
-        ];
-
-        var lightColors = [
-            [200.00, 200.00, 200.00], [0.10, 0.00, 0.00], [0.00, 0.00, 0.20], [0.00, 0.10, 0.00]
-        ];
+        var isLoaded = 0;
         var canvas;
         var OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT;
+        var voa = 0;
+        var ext = null;
         function main() {
             // Retrieve <canvas> element
             canvas = document.getElementById('webgl');
@@ -188,6 +224,8 @@
             gl.getExtension("OES_texture_float");
             gl.getExtension("OES_texture_half_float");
             gl.getExtension("OES_texture_half_float_linear");
+            gl.getExtension("WEBGL_depth_texture");
+            ext = gl.getExtension("WEBGL_draw_buffers");
             var bloomProgram = createProgram(gl,bloom_vs,bloom_fs);
             bloomProgram.aPos = gl.getAttribLocation(bloomProgram,'aPos');
             bloomProgram.aNormal = gl.getAttribLocation(bloomProgram,'aNormal');
@@ -197,8 +235,9 @@
             bloomProgram.model = gl.getUniformLocation(bloomProgram,'model');
             bloomProgram.normalMatrix = gl.getUniformLocation(bloomProgram,'normalMatrix');
             bloomProgram.diffuseTexture = gl.getUniformLocation(bloomProgram,'diffuseTexture');
+            bloomProgram.cubeDiffusetexture = gl.getUniformLocation(bloomProgram,'cubeDiffusetexture');
+            bloomProgram.isCube = gl.getUniformLocation(bloomProgram,'isCube');
             bloomProgram.viewPos = gl.getUniformLocation(bloomProgram,'viewPos');
-            bloomProgram.normalMatrix = gl.getUniformLocation(bloomProgram,'normalMatrix');
             bloomProgram.lights = [];
             for (var i = 0; i < 4; i++) {
               bloomProgram.lights[i] = {};
@@ -210,8 +249,7 @@
             bloom_lightboxProgram.aPos = gl.getAttribLocation(bloom_lightboxProgram,'aPos');
             bloom_lightboxProgram.aNormal = gl.getAttribLocation(bloom_lightboxProgram,'aNormal');
             bloom_lightboxProgram.aTexCoords = gl.getAttribLocation(bloom_lightboxProgram,'aTexCoords');
-            bloom_lightboxProgram.projection = gl.getUniformLocation(bloom_lightboxProgram,'projection');
-            bloom_lightboxProgram.view = gl.getUniformLocation(bloom_lightboxProgram,'view');
+            bloom_lightboxProgram.viewProjection = gl.getUniformLocation(bloom_lightboxProgram,'viewProjection');
             bloom_lightboxProgram.model = gl.getUniformLocation(bloom_lightboxProgram,'model');
             bloom_lightboxProgram.normalMatrix = gl.getUniformLocation(bloom_lightboxProgram,'normalMatrix');
             bloom_lightboxProgram.lightColor = gl.getUniformLocation(bloom_lightboxProgram,'lightColor');
@@ -221,6 +259,7 @@
             blurProgram.aTexCoords = gl.getAttribLocation(blurProgram,'aTexCoords');
             blurProgram.image = gl.getUniformLocation(blurProgram,'image');
             blurProgram.horizontal = gl.getUniformLocation(blurProgram,'horizontal');
+            blurProgram.texSize = gl.getUniformLocation(blurProgram,'texSize');
 
             var bloom_finalProgram = createProgram(gl,bloom_final_vs,bloom_final_fs);
             bloom_finalProgram.aPos = gl.getAttribLocation(bloom_finalProgram,'aPos');
@@ -229,31 +268,15 @@
             bloom_finalProgram.bloomBlur = gl.getUniformLocation(bloom_finalProgram,'bloomBlur');
             bloom_finalProgram.bloom= gl.getUniformLocation(bloom_finalProgram,'bloom');
             bloom_finalProgram.exposure = gl.getUniformLocation(bloom_finalProgram,'exposure');
-            //var woodTexture = initTextures(gl,bloomProgram,'../images/wood.png');
-            //var containerTexture = initTextures(gl,program,'../images/container');
 
-            var hdrFBO = initFramebufferObject(gl);
-            var pingpongFBO1 = initPingpongFBO(gl);
-            var pingpongFBO2 = initPingpongFBO(gl);
-
+            var hdrFBO = initHDRFBO(gl);
+            var {pingpongFBOS,pingpongColorbuffers} = initPingpongFBO(gl);
             var {lightPositions,lightColors} = initLights();
-            var wood_bloom = initTextures(gl,bloomProgram,'../images/wood.png',0);
-            var wood_blur = initTextures(gl,blurProgram,'../images/wood.png',0);
-            var wood_final = initTextures(gl,bloom_finalProgram,'../images/wood.png',0);
-            var container_final = initTextures(gl,bloom_finalProgram,'../images/container.png',1);
-            
-            var VAO = initVertexBuffers(gl);
-            var quadVAO = initPlaneVertexBuffers(gl);
-            // Set texture
-            var woodTexture = initTextures(gl, sceneProgram, '../images/wood.png');
-            if (!woodTexture) {
-                console.log('Failed to intialize the texture.');
-                return;
-            }
-
-            //gl.activeTexture(gl.TEXTURE0); // Set a texture object to the texture unit
-            //gl.bindTexture(gl.TEXTURE_2D, hdrFBO.texture);
-
+            var wood_bloom = initTextures(gl,bloomProgram,bloomProgram.diffuseTexture,'../images/wood.png',0);
+            var container_bloom = initTextures(gl,bloomProgram,bloomProgram.cubeDiffusetexture,'../images/container2.png',1);
+            //var wood_blur = initTextures(gl,blurProgram,blurProgram.image,'../images/wood.png',0);
+            //var wood_final = initTextures(gl,bloom_finalProgram,bloom_finalProgram.scene,'../images/wood.png',0);
+            //var container_final = initTextures(gl,bloom_finalProgram,bloom_finalProgram.bloomBlur,'../images/container2.png',1);
 
             // Set the clear color and enable the depth test
             gl.enable(gl.DEPTH_TEST);
@@ -262,44 +285,98 @@
             gl.clearColor(0.0, 0.0, 0.0, 1.0);
 
             // Calculate the view projection matrix
-            cameraPos = [0.0, 8.0, 10.0];
+            cameraPos = [-10.0, 4.0, -2.0];
             var viewProjMatrix = new Matrix4();
-            viewProjMatrix.setPerspective(45.0, canvas.width / canvas.height, 1.0, 100.0);
+            viewProjMatrix.setPerspective(45.0, canvas.width / canvas.height, 1.0, 200.0);
             viewProjMatrix.lookAt(cameraPos[0], cameraPos[1], cameraPos[2], 0, 0, 0, 0, 1, 0);
 
             // Start drawing
             var currentAngle = 0.0; // Current rotation angle (degrees)
             var tick = function () {
                 currentAngle = animate(currentAngle);  // Update current rotation angle
-                
+                if(isLoaded==2){
                 gl.clearColor(0.0,0.0,0.0,1.0);
                 gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
                 gl.bindFramebuffer(gl.FRAMEBUFFER, hdrFBO);
                 gl.useProgram(bloomProgram);
-                gl.uniformMatrix4fv(blurProgram,viewProjMatrix.elements);
-                gl.activeTexture(gl.TEXTURE0+0);
-                gl.bindTexture(gl.texture2D,wood_bloom);
-                for(var i=0;i<lightPositions.lngth;i++){
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D,wood_bloom);
+                gl.uniformMatrix4fv(bloomProgram.viewProjection,false,viewProjMatrix.elements);
+                for(var i=0;i<lightPositions.length;i++){
                   gl.uniform3f(bloomProgram.lights[i].Position, lightPositions[i][0], lightPositions[i][1], lightPositions[i][2]);
                   gl.uniform3f(bloomProgram.lights[i].Color, lightColors[i][0], lightColors[i][1], lightColors[i][2]);
                 }
                 gl.uniform3f(bloomProgram.viewPos,cameraPos[0], cameraPos[1], cameraPos[2]);
+                gl.uniform1i(bloomProgram.isCube, 0);
+                AddCube(gl,bloomProgram, [0.0,-2.0,0.0], [12.5,0.5,12.5]);
+                gl.activeTexture(gl.TEXTURE1);
+                gl.bindTexture(gl.TEXTURE_2D,container_bloom);
+                gl.uniform1i(bloomProgram.isCube, 1);
+                AddCube(gl,bloomProgram, [0.0,1.5,0.0], [0.5,0.5,0.5],[30,1,0,0]);
+                AddCube(gl,bloomProgram, [2.0,0.0,1.0], [0.5,0.5,0.5],[45,0,1,0]);
+                AddCube(gl,bloomProgram, [-1.0,-1.0,2.0], [1.0,1.0,1.0],[60,0,0,1]);
+                AddCube(gl,bloomProgram, [0.0,2.2,4.0], [0.7,0.7,0.7],[60,1,1,1]);
+                AddCube(gl,bloomProgram, [-2.0,1.0,-4.0], [1.0,1.0,1.0]);
+                AddCube(gl,bloomProgram, [-4.0,0.0,-1.0], [0.5,0.5,0.5],[45,0,1,0]);
                 
+                gl.useProgram(bloom_lightboxProgram);
+                gl.uniformMatrix4fv(bloom_lightboxProgram.viewProjection,false,viewProjMatrix.elements);
+                for(var i=0;i<lightPositions.length;i++){
+                  var model = new Matrix4();
+                  gl.uniform3f(bloom_lightboxProgram.lightColor,lightColors[i][0],lightColors[i][1],lightColors[i][2]);
+                  AddCube(gl,bloom_lightboxProgram,lightPositions[i],[0.25,0.25,0.25]);
+                }
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-                requestAnimationFrame(tick, canvas);
+                var horizontal = 1,first_iteration = true,amount = 10;
+                gl.useProgram(blurProgram);
+                gl.uniform2f(blurProgram.texSize,500,500);
+                gl.uniform1i(blurProgram.image,0);
+                for(var i=0;i<amount;i++) {
+                  var pingpongFBO = pingpongFBOS[horizontal];
+                  gl.bindFramebuffer(gl.FRAMEBUFFER,pingpongFBO);
+                  //把horizontal这个参数传进去
+                  gl.uniform1i(blurProgram.horizontal,horizontal);
+                  var temp = horizontal==1 ? 0 : 1;
+                  gl.activeTexture(gl.TEXTURE0);
+                  gl.bindTexture(gl.TEXTURE_2D, first_iteration ? hdrFBO.hdrColors2 :pingpongColorbuffers[temp]);
+                  //gl.bindTexture(gl.TEXTURE_2D, hdrFBO.hdrColors2);
+                  renderQuad(gl,blurProgram);
+                  horizontal = temp;
+                  if(first_iteration) first_iteration = false;
+                }
+                gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+                gl.useProgram(bloom_finalProgram);
+                gl.uniform1i(bloom_finalProgram.scene,0);
+                gl.uniform1i(bloom_finalProgram.bloomBlur,1);
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, hdrFBO.hdrColors1);
+                gl.activeTexture(gl.TEXTURE1);
+                gl.bindTexture(gl.TEXTURE_2D,pingpongColorbuffers[0]);
+                renderQuad(gl,bloom_finalProgram);  
+                
+              }
+              requestAnimationFrame(tick, canvas);
             };
             tick();
         }
-        function AddCube(gl,program){
+        function AddCube(gl,program,trans,scale,rotation){
             var model = new Matrix4();
-            model.translate(0.0, -1.0, 0.0);
-            model.scale(12.5,0.5,12.5);
-            gl.uniformMatrix4fv(program.model, model.elements);
-            renderCube();
+            var normalMatrix = new Matrix4();
+            model.translate(trans[0],trans[1],trans[2]);
+            if(rotation) model.rotate(rotation[0],rotation[1],rotation[2],rotation[3]);
+            model.scale(scale[0],scale[1],scale[2]);
+            gl.uniformMatrix4fv(program.model,false, model.elements);
+            normalMatrix.setInverseOf(model);
+            normalMatrix.transpose();
+            gl.uniformMatrix4fv(program.normalMatrix, false, normalMatrix.elements);
+            renderCube(gl,program);
         }
 
-        function renderCube(){
-          var vertices = new Float32Array([
+        function renderCube(gl,program){
+            var vertices = new Float32Array([
             -1.0, -1.0, -1.0,  0.0,  0.0, -1.0, 0.0, 0.0, // bottom-left
              1.0,  1.0, -1.0,  0.0,  0.0, -1.0, 1.0, 1.0, // top-right
              1.0, -1.0, -1.0,  0.0,  0.0, -1.0, 1.0, 0.0, // bottom-right         
@@ -336,12 +413,30 @@
             -1.0, -1.0, -1.0,  0.0, -1.0,  0.0, 0.0, 1.0, // top-right
             // top face
             -1.0,  1.0, -1.0,  0.0,  1.0,  0.0, 0.0, 1.0, // top-left
-             1.0,  1.0f , 1.0,  0.0,  1.0,  0.0, 1.0, 0.0, // bottom-right
+             1.0,  1.0 , 1.0,  0.0,  1.0,  0.0, 1.0, 0.0, // bottom-right
              1.0,  1.0, -1.0,  0.0,  1.0,  0.0, 1.0, 1.0, // top-right     
              1.0,  1.0,  1.0,  0.0,  1.0,  0.0, 1.0, 0.0, // bottom-right
             -1.0,  1.0, -1.0,  0.0,  1.0,  0.0, 0.0, 1.0, // top-left
             -1.0,  1.0,  1.0,  0.0,  1.0,  0.0, 0.0, 0.0  // bottom-left   
           ]);
+          var vertexBuffer = gl.createBuffer();
+            if (!vertexBuffer) return -1;
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);//这个过程类似初始化一个空的ARRAY_BUFFER类型的数据缓冲区
+            gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);//将数据填充到缓冲区中
+            var FSIZE = vertices.BYTES_PER_ELEMENT;
+
+            gl.vertexAttribPointer(program.aPos, 3, gl.FLOAT, false, FSIZE * 8, 0);//将缓冲数据分配到对应的位置上上
+            gl.enableVertexAttribArray(program.aPos);//开启数据分配操作
+
+            gl.vertexAttribPointer(program.aNormal, 3, gl.FLOAT, false, FSIZE * 8, FSIZE * 3);
+            //将缓冲数据分配到对应的位置上上
+            gl.enableVertexAttribArray(program.aNormal);//开启数据分配操作
+
+            gl.vertexAttribPointer(program.aTexCoords, 2, gl.FLOAT, false, FSIZE * 8, FSIZE * 6);
+            gl.enableVertexAttribArray(program.aTexCoords);
+            gl.drawArrays(gl.TRIANGLES, 0, 36);
+            //gl.bindBuffer(gl.ARRAY_BUFFER, null);
         }
 
         //配置帧缓冲区
@@ -350,7 +445,7 @@
              var hdrFBO = null;
              //在webgl1的情况下，加载一些插件
              
-            var extDepth = gl.getExtension("WEBGL_depth_texture");
+            //var extDepth = gl.getExtension("WEBGL_depth_texture");
             var error = function () {
                 if (hdrFBO) gl.deleteFramebuffer(hdrFBO);
                 //if (gPosition) gl.deleteTexture(gPosition);
@@ -405,7 +500,7 @@
                 return error();
             }
 
-            hdrFBO.hdrColors1 = hdrColor1; //配置深度纹理
+            hdrFBO.hdrColors1 = hdrColors1; //配置深度纹理
             hdrFBO.hdrColors2 = hdrColors2;
 
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -416,41 +511,88 @@
         }
         
         function initPingpongFBO(gl){
-            var pingpongFBO = gl.createFramebuffer();
-            gl.bindFramebuffer(gl.FRAMEBUFFER, pingpongFBO);
-            var pingpongColorbuffers = gl.createTexture();
-            gl.bindTexture(gl.TEXTURE_2D, pingpongColorbuffers);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT, 0, gl.RGBA, gl.FLOAT, null);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, ext.COLOR_ATTACHMENT1_WEBGL, gl.TEXTURE_2D, pingpongColorbuffers, 0);
-            var e = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-            if (gl.FRAMEBUFFER_COMPLETE !== e) {
+            var pingpongFBOS =[];
+            var pingpongColorbuffers = [];
+            var pingpongFBO1 = gl.createFramebuffer();
+            var pingpongFBO2 = gl.createFramebuffer();
+            pingpongFBOS.push(pingpongFBO1);
+            pingpongFBOS.push(pingpongFBO2);
+            var pingpongColorbuffers1 = gl.createTexture();
+            var pingpongColorbuffers2 = gl.createTexture();
+            pingpongColorbuffers.push(pingpongColorbuffers1);
+            pingpongColorbuffers.push(pingpongColorbuffers2);
+            for(var i=0;i<2;i++){
+              gl.bindFramebuffer(gl.FRAMEBUFFER, pingpongFBOS[i]);
+              gl.bindTexture(gl.TEXTURE_2D, pingpongColorbuffers[i]);
+              gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT, 0, gl.RGBA, gl.FLOAT, null);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+              var attachments = [ ext.COLOR_ATTACHMENT0_WEBGL];
+              ext.drawBuffersWEBGL(attachments);
+              var depthBuffer = gl.createRenderbuffer(); 
+              if (!depthBuffer) {
+                console.log('Failed to create renderbuffer object');
+                return error();
+              }
+              //配置深度缓冲，此处必须，否则物体对象画的不正确
+              gl.bindRenderbuffer(gl.RENDERBUFFER, depthBuffer);
+              gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
+
+              gl.framebufferTexture2D(gl.FRAMEBUFFER, ext.COLOR_ATTACHMENT0_WEBGL, gl.TEXTURE_2D, pingpongColorbuffers[i], 0);
+              gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthBuffer);
+              var e = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+              if (gl.FRAMEBUFFER_COMPLETE !== e) {
                 console.log('Frame buffer object is incomplete: ' + e.toString());
                 return error();
+              }
             }
-            pingpongFBO.pingpongColorbuffers = pingpongColorbuffers;
-            return pingpongFBO;
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.bindTexture(gl.TEXTURE_2D, null);
+            gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+            return {pingpongFBOS,pingpongColorbuffers};
         }
         
         function initLights(){
             var lightPositions = [];
             var lightColors = [];
-            lightPositions.push([0.0,0.5,1.5]);
+            lightPositions.push([-2.0,0.8,1.5]);
             lightPositions.push([-4.0,0.5,-3.0]);
-            lightPositions.push([3.0,0.5,1.0]);
-            lightPositions.push([-0.8,2.4,-1.0]);
+            lightPositions.push([3.0,1.5,1.0]);
+            lightPositions.push([-0.8,2.8,-1.3]);
             //
             lightColors.push([2.0,2.0,2.0]);
             lightColors.push([1.5,0.0,0.0]);
-            lightColors.push([3.0,0.0,1.5]);
+            lightColors.push([0.0,0.0,1.5]);
             lightColors.push([0.0,1.5,0.0]);
             return {lightPositions,lightColors};
         }
+        
+        function renderQuad(gl,program){
+              var quadVertices = new Float32Array([
+                  -1.0,  1.0, 0.0, 0.0, 1.0,
+                  -1.0, -1.0, 0.0, 0.0, 0.0,
+                  1.0,  1.0, 0.0, 1.0, 1.0,
+                  1.0, -1.0, 0.0, 1.0, 0.0
+                ]);
+            quadBuffer = gl.createBuffer();
+            if (!quadBuffer) return -1;
 
-        function renderQuad(gl,program,o) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);//这个过程类似初始化一个空的ARRAY_BUFFER类型的数据缓冲区
+            gl.bufferData(gl.ARRAY_BUFFER, quadVertices, gl.STATIC_DRAW);//将数据填充到缓冲区中
+            var FSIZE = quadVertices.BYTES_PER_ELEMENT;
+
+            gl.vertexAttribPointer(program.aPos, 3, gl.FLOAT, false, FSIZE * 5, 0);//将缓冲数据分配到对应的位置上上
+            gl.enableVertexAttribArray(program.aPos);//开启数据分配操作
+
+            gl.vertexAttribPointer(program.aTexCoords, 2, gl.FLOAT, false, FSIZE * 5, FSIZE * 3);
+            gl.enableVertexAttribArray(program.aTexCoords);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        }
+
+        function __renderQuad(gl,program,o) {
             var dataBuffer = o.vertexBuffer;
             gl.bindBuffer(gl.ARRAY_BUFFER, dataBuffer);
             var fsize = dataBuffer.FSIZE;
@@ -665,7 +807,7 @@
             return framebuffer;
         }
 
-        function initTextures(gl, program, url,index) {
+        function initTextures(gl, program,sampler, url,index) {
             var texture = gl.createTexture();   // Create a texture object
             if (!texture) {
                 console.log('Failed to create the texture object');
@@ -679,6 +821,7 @@
             }
             // Register the event handler to be called when image loading is completed
             image.onload = function () {
+                isLoaded++;
                 // Write the image data to texture object
                 gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);  // Flip the image Y coordinate
                 gl.activeTexture(gl.TEXTURE0+index);
@@ -690,7 +833,7 @@
 
                 // Pass the texure unit 0 to u_Sampler
                 gl.useProgram(program);
-                gl.uniform1i(program.u_Sampler, index);
+                gl.uniform1i(sampler, index);
 
                 gl.bindTexture(gl.TEXTURE_2D, null); // Unbind texture
             };
@@ -847,7 +990,7 @@
     </script>
 </head>
 <body onload="main()">
-    <canvas id="webgl" width="512" height="512">
+    <canvas id="webgl" width="1024" height="768">
         Please use a browser that supports "canvas"
     </canvas>
   </body>
